@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HAITHAM PLUS - مسح البطاقات</title>
+
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+<style>
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 18px;
+  background: #F3F5F9;
+  font-family: Arial, Tahoma, sans-serif;
+  color: #17243A;
+}
+
+.container {
+  max-width: 480px;
+  margin: 20px auto;
+}
+
+.header {
+  background: #102C50;
+  color: white;
+  padding: 25px;
+  border-radius: 20px;
+  text-align: center;
+}
+
+.logo {
+  font-size: 29px;
+  font-weight: 900;
+}
+
+.logo span {
+  color: #E8BA54;
+}
+
+.subtitle {
+  color: #D8E3F0;
+  margin-top: 8px;
+  font-size: 14px;
+}
+
+.card {
+  background: white;
+  padding: 22px;
+  border-radius: 20px;
+  margin-top: 15px;
+  box-shadow: 0 8px 25px rgba(0,0,0,.05);
+}
+
+.shop-info {
+  text-align: center;
+  font-size: 18px;
+  font-weight: bold;
+  color: #102C50;
+}
+
+#reader {
+  width: 100%;
+  margin-top: 20px;
+  overflow: hidden;
+  border-radius: 15px;
+}
+
+.status {
+  margin-top: 15px;
+  padding: 14px;
+  border-radius: 12px;
+  background: #F3F5F9;
+  text-align: center;
+  line-height: 1.8;
+  color: #667085;
+}
+
+.customer {
+  display: none;
+  margin-top: 18px;
+  padding: 20px;
+  background: #F3F7FC;
+  border-radius: 15px;
+  text-align: center;
+}
+
+.customer-name {
+  font-size: 23px;
+  font-weight: bold;
+  margin: 12px 0;
+  color: #102C50;
+}
+
+.customer-id {
+  color: #9A762C;
+  font-weight: bold;
+  font-size: 18px;
+}
+
+button {
+  width: 100%;
+  padding: 15px;
+  border: 0;
+  border-radius: 12px;
+  background: #102C50;
+  color: white;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+  margin-top: 15px;
+}
+
+button:disabled {
+  opacity: .6;
+}
+
+.secondary {
+  background: #E8EDF4;
+  color: #102C50;
+}
+
+.footer {
+  text-align: center;
+  color: #8A93A1;
+  font-size: 12px;
+  margin-top: 18px;
+}
+
+#error {
+  display: none;
+  background: #FFF0F0;
+  color: #B42318;
+  padding: 13px;
+  margin-top: 12px;
+  border-radius: 10px;
+}
+
+#success {
+  display: none;
+  background: #E8F5EC;
+  color: #187A42;
+  padding: 15px;
+  margin-top: 15px;
+  border-radius: 12px;
+  text-align: center;
+  line-height: 1.8;
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+  <div class="header">
+    <div class="logo">HAITHAM <span>PLUS</span></div>
+    <div class="subtitle">نظام تسجيل استخدامات بطاقات العملاء</div>
+  </div>
+
+  <div class="card">
+
+    <div class="shop-info" id="shopName">
+      صفحة المحل
+    </div>
+
+    <div class="status" id="status">
+      اضغط بدء المسح لتشغيل كاميرا الهاتف.
+    </div>
+
+    <div id="reader"></div>
+
+    <button id="startBtn" onclick="startScanner()">
+      بدء مسح البطاقة
+    </button>
+
+    <div id="customer" class="customer">
+
+      <div>تم التعرف على بطاقة العميل</div>
+
+      <div id="customerName" class="customer-name"></div>
+
+      <div id="customerId" class="customer-id"></div>
+
+      <button id="recordBtn" onclick="recordVisit()">
+        تسجيل استخدام البطاقة
+      </button>
+
+      <button class="secondary" onclick="cancelScan()">
+        إلغاء والعودة للمسح
+      </button>
+
+    </div>
+
+    <div id="success"></div>
+
+    <div id="error"></div>
+
+  </div>
+
+  <div class="footer">
+    HAITHAM PLUS - Digital Loyalty Platform
+  </div>
+
+</div>
+
+
+<script>
+
+// رابط النظام الخلفي الجديد
+const API_URL =
+'https://script.google.com/macros/s/AKfycbxdN4vXNPq5fe7foMTnz4OXEdnLq33UdHUHhBXG1marDrlmMrhf1-u9PwaZyicyg2E/exec';
+
+// رقم المحل يؤخذ تلقائياً من الرابط
+const params = new URLSearchParams(window.location.search);
+const SHOP_ID = params.get('shopId') || '';
+
+let scanner = null;
+let selectedCustomer = null;
+let scannerRunning = false;
+let processing = false;
+
+
+// عرض معرف المحل
+document.getElementById('shopName').innerText =
+  'المحل: ' + (SHOP_ID || 'غير محدد');
+
+
+// ==================================================
+// JSONP CONNECTION TO GOOGLE APPS SCRIPT
+// ==================================================
+
+function callBackend(action, values) {
+
+  return new Promise(function(resolve, reject) {
+
+    const callbackName =
+      'hpCallback_' + Date.now() + '_' +
+      Math.floor(Math.random() * 100000);
+
+    const script = document.createElement('script');
+
+    const query = new URLSearchParams({
+      action: action,
+      callback: callbackName,
+      ...values
+    });
+
+    let finished = false;
+
+    function cleanup() {
+      finished = true;
+      delete window[callbackName];
+      if (script.parentNode) {
+        script.parentNode.removeChild(script);
+      }
+      clearTimeout(timer);
+    }
+
+    const timer = setTimeout(function() {
+      if (!finished) {
+        cleanup();
+        reject(new Error('انتهت مهلة الاتصال بالنظام.'));
+      }
+    }, 20000);
+
+    window[callbackName] = function(result) {
+      cleanup();
+      resolve(result);
+    };
+
+    script.onerror = function() {
+      cleanup();
+      reject(new Error('تعذر الاتصال بالنظام.'));
+    };
+
+    script.src = API_URL + '?' + query.toString();
+
+    document.body.appendChild(script);
+
+  });
+}
+
+
+// ==================================================
+// EXTRACT CUSTOMER ID FROM QR
+// ==================================================
+
+function extractCustomerId(value) {
+
+  value = String(value || '').trim();
+
+  if (/^HP-\d+$/i.test(value)) {
+    return value.toUpperCase();
+  }
+
+  try {
+
+    const url = new URL(value);
+
+    const id = url.searchParams.get('card');
+
+    if (id && /^HP-\d+$/i.test(id)) {
+      return id.toUpperCase();
+    }
+
+  } catch(e) {}
+
+  const match = value.match(/HP-\d+/i);
+
+  if (match) {
+    return match[0].toUpperCase();
+  }
+
+  return null;
+}
+
+
+// ==================================================
+// START CAMERA
+// ==================================================
+
+async function startScanner() {
+
+  if (!SHOP_ID) {
+    showError('رابط المحل غير مكتمل. يجب تحديد Shop ID.');
+    return;
+  }
+
+  hideMessages();
+
+  document.getElementById('status').innerText =
+    'جاري تشغيل الكاميرا...';
+
+  document.getElementById('startBtn').disabled = true;
+
+  try {
+
+    if (!scanner) {
+      scanner = new Html5Qrcode('reader');
+    }
+
+    const cameras = await Html5Qrcode.getCameras();
+
+    if (!cameras.length) {
+      throw new Error('لم يتم العثور على كاميرا.');
+    }
+
+    const camera =
+      cameras.find(c => /back|rear|environment/i.test(c.label)) ||
+      cameras[cameras.length - 1];
+
+    await scanner.start(
+      camera.id,
+      {
+        fps: 10,
+        qrbox: {
+          width: 240,
+          height: 240
+        },
+        aspectRatio: 1
+      },
+      onScanSuccess
+    );
+
+    scannerRunning = true;
+
+    document.getElementById('status').innerText =
+      'وجّه الكاميرا نحو QR بطاقة العميل.';
+
+    document.getElementById('startBtn').innerText =
+      'الكاميرا تعمل';
+
+    document.getElementById('startBtn').disabled = true;
+
+  } catch(error) {
+
+    document.getElementById('startBtn').disabled = false;
+    document.getElementById('startBtn').innerText =
+      'إعادة تشغيل الكاميرا';
+
+    showError(error.message || 'تعذر تشغيل الكاميرا.');
+
+    document.getElementById('status').innerText =
+      'تعذر تشغيل الكاميرا.';
+
+  }
+}
+
+
+// ==================================================
+// QR SCAN SUCCESS
+// ==================================================
+
+async function onScanSuccess(decodedText) {
+
+  if (processing || selectedCustomer) return;
+
+  processing = true;
+
+  try {
+
+    if (scannerRunning) {
+      await scanner.pause(true);
+    }
+
+  } catch(e) {}
+
+  const customerId = extractCustomerId(decodedText);
+
+  if (!customerId) {
+
+    showError('هذا الرمز ليس بطاقة عميل HAITHAM PLUS.');
+    processing = false;
+
+    setTimeout(resumeScanner, 1500);
+
+    return;
+  }
+
+  document.getElementById('status').innerText =
+    'جاري التحقق من البطاقة...';
+
+  try {
+
+    const result = await callBackend(
+      'verifyCustomer',
+      {
+        customerId: customerId
+      }
+    );
+
+    if (!result || !result.success) {
+      throw new Error(
+        result && result.message
+          ? result.message
+          : 'البطاقة غير موجودة.'
+      );
+    }
+
+    selectedCustomer = {
+      id: result.id,
+      name: result.name,
+      city: result.city
+    };
+
+    document.getElementById('customerName').innerText =
+      result.name;
+
+    document.getElementById('customerId').innerText =
+      result.id;
+
+    document.getElementById('customer').style.display =
+      'block';
+
+    document.getElementById('status').innerText =
+      'تأكد من العميل، ثم سجل استخدام البطاقة.';
+
+    document.getElementById('recordBtn').disabled = false;
+
+  } catch(error) {
+
+    showError(error.message || 'تعذر التحقق من البطاقة.');
+
+    setTimeout(resumeScanner, 2000);
+
+  }
+
+}
+
+
+// ==================================================
+// RECORD VISIT
+// ==================================================
+
+async function recordVisit() {
+
+  if (!selectedCustomer) return;
+
+  const button = document.getElementById('recordBtn');
+
+  button.disabled = true;
+  button.innerText = 'جاري تسجيل الاستخدام...';
+
+  try {
+
+    const result = await callBackend(
+      'recordVisit',
+      {
+        shopId: SHOP_ID,
+        customerId: selectedCustomer.id
+      }
+    );
+
+    if (!result || !result.success) {
+      throw new Error(
+        result && result.message
+          ? result.message
+          : 'تعذر تسجيل الاستخدام.'
+      );
+    }
+
+    document.getElementById('customer').style.display =
+      'none';
+
+    const success = document.getElementById('success');
+
+    success.innerHTML =
+      '<strong>✅ تم تسجيل استخدام البطاقة بنجاح</strong>' +
+      '<br>العميل: ' + escapeHtml(selectedCustomer.name) +
+      '<br>رقم العملية: ' + escapeHtml(result.visitId) +
+      '<br>يمكنك مسح بطاقة عميل آخر.';
+
+    success.style.display = 'block';
+
+    selectedCustomer = null;
+
+    button.innerText = 'تسجيل استخدام البطاقة';
+
+    document.getElementById('status').innerText =
+      'تم التسجيل بنجاح. جاهز للمسح التالي.';
+
+    setTimeout(function() {
+      document.getElementById('success').style.display = 'none';
+      resumeScanner();
+    }, 1800);
+
+  } catch(error) {
+
+    button.disabled = false;
+    button.innerText = 'إعادة محاولة التسجيل';
+
+    showError(error.message || 'تعذر تسجيل الاستخدام.');
+
+  }
+
+}
+
+
+// ==================================================
+// CANCEL SCAN
+// ==================================================
+
+function cancelScan() {
+
+  selectedCustomer = null;
+  processing = false;
+
+  document.getElementById('customer').style.display =
+    'none';
+
+  hideMessages();
+
+  resumeScanner();
+
+}
+
+
+// ==================================================
+// RESUME CAMERA
+// ==================================================
+
+async function resumeScanner() {
+
+  if (!scanner || !scannerRunning) {
+    document.getElementById('startBtn').disabled = false;
+    document.getElementById('startBtn').innerText =
+      'بدء مسح البطاقة';
+    return;
+  }
+
+  try {
+    await scanner.resume();
+    processing = false;
+
+    document.getElementById('status').innerText =
+      'وجّه الكاميرا نحو QR بطاقة العميل.';
+
+  } catch(error) {
+
+    processing = false;
+
+    document.getElementById('startBtn').disabled = false;
+    document.getElementById('startBtn').innerText =
+      'بدء المسح من جديد';
+
+  }
+
+}
+
+
+// ==================================================
+// HELPERS
+// ==================================================
+
+function escapeHtml(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function showError(message) {
+  const box = document.getElementById('error');
+  box.innerText = message;
+  box.style.display = 'block';
+}
+
+function hideMessages() {
+  document.getElementById('error').style.display = 'none';
+  document.getElementById('success').style.display = 'none';
+}
+
+</script>
+
+</body>
+</html>
